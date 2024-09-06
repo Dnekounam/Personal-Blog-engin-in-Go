@@ -49,7 +49,7 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 
 	offset := (pageNum - 1) * PostPerPage
 
-	rows, err := db.Query("SELECT title, content FROM posts LIMIT ? OFFSET ?", PostPerPage, offset)
+	rows, err := db.Query("SELECT id, title, content FROM posts LIMIT ? OFFSET ?", PostPerPage, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -60,28 +60,40 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 	var posts []Post
 	for rows.Next() {
 		var post Post
-		if err := rows.Scan(&post.Title, &post.Content); err != nil {
+		if err := rows.Scan(&post.ID, &post.Title, &post.Content); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		posts = append(posts, post)
 
 	}
-	tmpl, err := template.ParseFiles("templates/home.html")
+	var nextExists bool
+	row := db.QueryRow("SELECT COUNT(*) FROM posts")
+	var totalPosts int
+	err = row.Scan(&totalPosts)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	nextExists = (pageNum * PostPerPage) < totalPosts
+
 	data := struct {
 		Posts       []Post
 		CurrentPage int
 		NextPage    int
 		PrevPage    int
+		nextExists  bool
 	}{
 		Posts:       posts,
 		CurrentPage: pageNum,
 		NextPage:    pageNum + 1,
 		PrevPage:    pageNum - 1,
+		nextExists:  nextExists,
+	}
+	tmpl, err := template.ParseFiles("templates/home.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	tmpl.Execute(w, data)
@@ -89,19 +101,23 @@ func HomeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type Post struct {
+	ID      int
 	Title   string
 	Content string
 }
 
 func NewPostHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		tmpl, err := template.ParseFiles("templates/new_post.html")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		tmpl.Execute(w, nil)
+	cookie, err := r.Cookie("session")
+	if err != nil || cookie.Value != "authenticated" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
 	}
+	tmpl, err := template.ParseFiles("templates/new_post.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
 }
 
 func CreatePostHandler(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +153,59 @@ func PostHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
+var validUsername = "admin"
+var validPassword = "password"
+
+func LoginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		tmpl, err := template.ParseFiles("templates/login.html")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		tmpl.Execute(w, nil)
+	} else if r.Method == http.MethodPost {
+		username := r.FormValue("username")
+		password := r.FormValue("password")
+
+		if username == validUsername && password == validPassword {
+
+			http.SetCookie(w, &http.Cookie{
+				Name:  "session",
+				Value: "authenticated",
+				Path:  "/",
+			})
+			http.Redirect(w, r, "/new1", http.StatusSeeOther)
+		} else {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		}
+	}
+}
+func DeletePostHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cookie, err := r.Cookie("session")
+	if err != nil || cookie.Value != "authenticated" {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	postID := r.URL.Query().Get("id")
+	if postID == "" {
+		http.Error(w, "Missing post ID", http.StatusBadRequest)
+		return
+	}
+	_, err = db.Exec("DELETE FROM posts WHERE id = ?", postID)
+	if err != nil {
+		http.Error(w, "Failed to delete post", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 func main() {
 
 	initDB()
@@ -146,6 +215,8 @@ func main() {
 	http.HandleFunc("/post/", PostHandler)
 	http.HandleFunc("/new1", NewPostHandler)
 	http.HandleFunc("/new", CreatePostHandler)
+	http.HandleFunc("/login", LoginHandler)
+	http.HandleFunc("/delete", DeletePostHandler)
 
 	fmt.Println("Starting server on :9092")
 	http.ListenAndServe(":9092", nil)

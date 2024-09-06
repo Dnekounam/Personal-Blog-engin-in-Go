@@ -10,15 +10,24 @@
     {{range .Posts}}
         <h2>{{.Title}}</h2>
         <p>{{.Content}}</p>
+
+        <!-- Delete button for each post -->
+        <form method="POST" action="/delete?id={{.ID}}" style="display:inline;">
+            <button type="submit">Delete</button>
+        </form>
     {{else}}
         <p>No posts available.</p>
     {{end}}
 
+    <!-- Pagination links -->
     <div>
         {{if gt .PrevPage 0}}
             <a href="/?page={{.PrevPage}}">Previous</a>
         {{end}}
-        <a href="/?page={{.NextPage}}">Next</a>
+
+        {{if .NextExists}}
+            <a href="/?page={{.NextPage}}">Next</a>
+        {{end}}
     </div>
 </body>
 </html>
